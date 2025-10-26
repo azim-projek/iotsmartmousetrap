@@ -1,87 +1,122 @@
+// =====================================================================
+// 🧠 Smart Tikus Trap System - ESP32 + Ultrasonic + Dual Servo + Telegram
+// ---------------------------------------------------------------------
+// 📘 Description:
+// This IoT-based system automatically detects the presence of a rat (tikus)
+// using an ultrasonic sensor. When motion is detected within a threshold
+// distance, two servos rotate in opposite directions (clockwise & 
+// counter-clockwise) to activate a mechanical trap. The system then 
+// notifies the user via Telegram with real-time status updates.
+//
+// 🧩 Features:
+// - Dual servo opposite rotation (CW & CCW)
+// - Ultrasonic distance detection
+// - Automatic activation when tikus is detected
+// - Telegram notifications with timestamps
+// - Auto Wi-Fi reconnection if connection is lost
+// - NTP time synchronization for accurate log times
+//
+// ⚙️ Hardware Used:
+// - ESP32 DevKit
+// - HC-SR04 Ultrasonic Sensor
+// - 2x SG90 or MG996R Servo Motors
+//
+// 📡 Communication:
+// - Wi-Fi (2.4GHz) connection to Telegram Bot via Bot API
+//
+// 👨‍💻 Developed by: [Your Name]
+// 🗓️ Version: 1.0
+// =====================================================================
+
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
 #include <ESP32Servo.h>
+#include "time.h"
 
-// ====== WiFi & Telegram Settings ======
-const char* WIFI_SSID = "realme GT NEO 3";
-const char* WIFI_PASS = "miskinsangatke";
-const char* BOT_TOKEN = "8498667402:AAFNyYRi8Nost92KMfCfaI4y4AhYm4jccNE";
-const char* CHAT_ID = "1034103142";
+// ====== WiFi & Telegram ======
+const char* WIFI_SSID = "ENTAHLAH";
+const char* WIFI_PASS = "hohwot22";
+const char* BOT_TOKEN = "8241310501:AAGq62Nyv3JnaOvfT0FUSwJJ6KlHD5KEE-U";
+const char* CHAT_ID   = "6450361222";
 
-// ====== Ultrasonic Pins ======
+// ====== NTP Time Settings ======
+const char* ntpServer = "pool.ntp.org";  
+const long gmtOffset_sec = 8 * 3600;     // Malaysia UTC+8
+const int daylightOffset_sec = 0;
+
+// ====== Ultrasonic Sensor ======
 #define TRIG_PIN 5
 #define ECHO_PIN 18
 
 // ====== Servo Pins ======
-#define SERVO_LEFT 13
-#define SERVO_RIGHT 12
+#define SERVO_LEFT 12   // Servo 1
+#define SERVO_RIGHT 13  // Servo 2
+
+Servo servoLeft;
+Servo servoRight;
 
 // ====== Variables ======
 long duration;
 float distance;
-float threshold = 10.0; // cm
-bool doorOpen = false;
+float threshold = 10.0;  // cm
+bool active = false;
 
-// ====== Objects ======
-Servo servoLeft;
-Servo servoRight;
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOT_TOKEN, client);
 
 // ====== Function Prototypes ======
-void openDoors();
-void closeDoors();
 float getDistance();
+void activateTrap();
+String getTimeStamp();
+void ensureWiFiConnected();
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n=== ESP32 Ultrasonic Door System ===");
+  Serial.println("\n=== Tikus Trap System (Dual Servo Opposite Rotation) ===");
 
   // === Servo Setup ===
   servoLeft.attach(SERVO_LEFT);
   servoRight.attach(SERVO_RIGHT);
-  delay(500);
-  closeDoors(); // Start closed
+  servoLeft.write(90);   // Neutral position
+  servoRight.write(90);
 
   // === Ultrasonic Setup ===
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
   // === WiFi Setup ===
-  Serial.println("Connecting to WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   client.setInsecure();
 
+  Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-
   Serial.println("\n✅ WiFi Connected!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
 
-  bot.sendMessage(CHAT_ID, "🚀 ESP32 Door System is Online", "");
+  // === NTP Time Setup ===
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  delay(2000); // Allow time to sync
+
+  bot.sendMessage(CHAT_ID, "🐭 Tikus Trap System (Dual Servo Opposite Rotation) is Online\n" + getTimeStamp(), "");
 }
 
 void loop() {
+  ensureWiFiConnected();  // Reconnect WiFi if lost
   distance = getDistance();
 
   Serial.print("Distance: ");
   Serial.print(distance);
   Serial.println(" cm");
 
-  if (distance > 2 && distance < threshold && !doorOpen) {
-    doorOpen = true;
-    openDoors();
-    bot.sendMessage(CHAT_ID, "🚪 Object Detected! Doors Opening...", "");
-    delay(3000);
-    closeDoors();
-    bot.sendMessage(CHAT_ID, "✅ Doors Closed", "");
-    doorOpen = false;
+  if (distance > 2 && distance < threshold && !active) {
+    active = true;
+    activateTrap();
+    active = false;
   }
 
   delay(500);
@@ -94,30 +129,62 @@ float getDistance() {
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
+
   duration = pulseIn(ECHO_PIN, HIGH, 25000);
   if (duration == 0) return 999;
   return (duration * 0.034 / 2);
 }
 
-// ====== Function: Open Doors (180° range) ======
-void openDoors() {
-  Serial.println("Opening doors (180°)...");
-  for (int pos = 0; pos <= 180; pos++) {
-    servoLeft.write(pos);
-    servoRight.write(180 - pos);
-   
+// ====== Function: Activate Trap ======
+void activateTrap() {
+  Serial.println("🚨 Tikus detected! Activating trap...");
+  bot.sendMessage(CHAT_ID, "🚨 Tikus detected! Servos moving (CW & CCW)\n" + getTimeStamp(), "");
 
-  }
-  Serial.println("Doors opened!");
+  // --- Move in opposite directions ---
+  servoLeft.write(0);    // CW
+  servoRight.write(180); // CCW
+  Serial.println("Servos moved (CW/CCW)");
+
+  delay(10000); // wait 10s
+
+  // --- Return to neutral ---
+  servoLeft.write(90);
+  servoRight.write(90);
+  Serial.println("✅ Servos returned to neutral position");
+
+  bot.sendMessage(CHAT_ID, "✅ Servos returned to neutral position\n" + getTimeStamp(), "");
 }
 
-// ====== Function: Close Doors (180° range) ======
-void closeDoors() {
-  Serial.println("Closing doors (180°)...");
-  for (int pos = 180; pos >= 0; pos--) {
-    servoLeft.write(pos);
-    servoRight.write(180 - pos);
-   
+// ====== Function: WiFi Reconnect ======
+void ensureWiFiConnected() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("⚠️ WiFi lost. Reconnecting...");
+    WiFi.disconnect();
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n✅ WiFi Reconnected!");
+      bot.sendMessage(CHAT_ID, "📶 WiFi reconnected successfully!\n" + getTimeStamp(), "");
+    } else {
+      Serial.println("\n❌ Failed to reconnect.");
+    }
   }
-  Serial.println("Doors closed!");
+}
+
+// ====== Function: Get Time Stamp ======
+String getTimeStamp() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return "⏰ Time unavailable";
+  }
+
+  char buffer[30];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String("🕒 ") + buffer;
 }
